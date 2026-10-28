@@ -1,0 +1,76 @@
+#!/bin/sh
+# Client shim. Same argv, same exit codes, either local or over ssh.
+# A remote call needs only sh and ssh.
+set -u
+
+host=${QMD_REMOTE_HOST:-}
+
+# $0 may be a symlink in ~/.local/bin, so resolve it before looking for qmd-ro
+# and the help files.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+dir=$(dirname "$self")
+ro=$dir/qmd-ro.ts
+
+# Help is static text next to this script: no ssh, no network, no qmd.
+# rg style: -h short, --help full. Nothing else selects help.
+help=
+case ${1:-} in
+  -h) help=$dir/qmd-help.txt ;;
+  --help) help=$dir/qmd-help-full.txt ;;
+esac
+
+if [ -n "$help" ]; then
+  if [ ! -f "$help" ]; then
+    echo "qmdr: help file not found at $help" >&2
+    exit 5
+  fi
+  if [ ! -r "$help" ]; then
+    echo "qmdr: help file not readable at $help" >&2
+    exit 5
+  fi
+  cat "$help"
+  exit 0
+fi
+
+# No host configured: run the same read-only gate here instead of plain qmd,
+# so a local agent gets the same whitelist. QMD_LOCAL_BIN names the real qmd.
+if [ -z "$host" ]; then
+  if [ ! -f "$ro" ]; then
+    echo "qmdr: qmd-ro not found at $ro (set QMD_REMOTE_HOST for ssh mode)" >&2
+    exit 5
+  fi
+  if [ -z "${QMD_RO_BIN:-}" ] && [ -n "${QMD_LOCAL_BIN:-}" ]; then
+    QMD_RO_BIN=$QMD_LOCAL_BIN
+    export QMD_RO_BIN
+  fi
+  exec "$ro" "$@"
+fi
+
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/qmd
+mkdir -p "$cache" || exit 5
+
+# argv goes over as a NUL stream. ssh joins a command into one string and lets
+# the remote shell split it again, which eats quotes, spaces and newlines.
+# QMD_SSH_OPTS is word-split on purpose (-p 2222, -i key, ...).
+# shellcheck disable=SC2086
+printf '%s\0' "$@" |
+  ssh -T -o BatchMode=yes -o ConnectTimeout=8 -o ConnectionAttempts=1 \
+      -o ControlMaster=auto -o "ControlPath=$cache/ssh-%C" -o ControlPersist=10m \
+      ${QMD_SSH_OPTS:-} "$host" qmd-ro
+rc=$?
+
+# ssh itself uses 255 for "could not connect". Translate it so callers never
+# confuse a dead link with a qmd error.
+if [ $rc -eq 255 ]; then
+  echo "qmd: cannot reach $host (network down, or ssh key rejected)" >&2
+  exit 5
+fi
+
+exit $rc

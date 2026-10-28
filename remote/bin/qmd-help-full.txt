@@ -1,0 +1,185 @@
+qmdr - full reference
+=====================
+
+qmdr is a thin read-only front end for qmd. The same argv runs either on a
+remote host over ssh or locally. A whitelist stops every command that can
+change the index or the files on disk.
+
+Most agent calls need only "qmdr -h". Read this page when a call fails, or
+when you need exact flags, output formats or exit codes.
+
+  qmdr -h       short cheat sheet
+  qmdr --help   this page
+
+
+Host mode
+---------
+  QMD_REMOTE_HOST set    argv goes to that host over ssh and runs there.
+  QMD_REMOTE_HOST unset  argv runs on this machine through the same whitelist.
+
+Help is printed from a local file, so it never needs the network.
+
+  QMD_REMOTE_HOST      "user@host" or an ssh alias. Empty means local mode.
+  QMD_SSH_OPTS         extra ssh flags, word-split: -p 2222 -i ~/.ssh/id_x
+  QMD_LOCAL_BIN        local mode only: the qmd binary to run
+  QMD_RO_BIN           qmd-ro only: the qmd binary on the server
+  XDG_CACHE_HOME       ssh control socket lives in $XDG_CACHE_HOME/qmd
+
+argv travels as a NUL stream over ssh stdin, so quotes, spaces and newlines
+in your query arrive byte for byte. ssh connections are multiplexed and kept
+alive for 10 minutes; the first call pays the handshake, later calls are fast.
+If the link is down, a call fails in about 8 seconds with exit 5.
+
+
+Commands
+--------
+qmdr query "<words>" [flags]
+    Hybrid search: query expansion, BM25, vectors, then LLM reranking.
+    The best quality path. Pass the question as a sentence.
+
+qmdr status
+    Index path, collections, document and vector counts. Start here when you
+    do not know which collections exist.
+
+qmdr ls [collection[/path]]
+    No argument: list collections. With a collection: list its files.
+    With a collection and a path: list that subtree.
+
+qmdr collection list
+    Collections with their path and glob mask.
+
+qmdr context list
+    Context notes added for paths. They feed ranking and rewriting.
+
+qmdr multi-get "<pattern>" [flags]
+    Fetch whole documents. Patterns come from search output or from ls, and
+    the form matters:
+      qmd://notes/a.md                  one virtual path
+      qmd://notes/a.md,qmd://notes/b.md  comma list
+      qmd://notes/*.md                   glob
+      a.md                               bare name, glob on the path tail
+    A comma list and a glob cannot mix: one * or ? turns the whole string
+    into a glob. Docids (#abc123) are not accepted here.
+      -l <num>            max lines per file
+      --max-bytes <num>   skip files bigger than this (default 10240)
+    Output is the raw document text with a File: header. --json, --csv,
+    --md and --xml work as usual.
+
+
+query flags
+-----------
+  -n <num>             number of results (default 5, 20 with --files/--json)
+  -c, --collection <name>
+                       limit to one collection; repeatable
+  --min-score <num>    drop hits below this score
+  --all                return every match, pair it with --min-score
+  --full               full document text instead of a snippet
+  --line-numbers       add line numbers
+  --files              output docid,score,path (plus context when set)
+  --json               JSON with snippets (20 results)
+  --csv                CSV with snippets
+  --md                 markdown
+  --xml                XML
+  --timeout <n>        remote timeout: 30s, 30000ms or 1m (query only)
+  --profile            per-step timing breakdown (query only)
+  -v, --verbose        debug detail: chunk selection, reranker scores
+  --index <name>       use another index (default: index)
+
+One output format per call. Do not mix --json with --csv.
+
+Snippets are short. When a hit looks right, read the whole file:
+  qmdr query "..." --files         #abc123,0.82,qmd://notes/a.md
+  qmdr multi-get "<path>" -l 300   read it
+Feed multi-get the third field, the qmd:// path. The #docid will not work.
+
+
+Read-only gate
+--------------
+Allowed: query, multi-get, status, ls, collection list, context list.
+Everything else exits 2 without touching qmd: update, embed, cleanup,
+collection add/remove/rename, context add/rm, get, search, vsearch, mcp,
+doctor.
+
+Note that plain qmd has search and vsearch; qmdr does not. query covers both
+and gives better results. There is also no get: multi-get reads one document
+or many, and it needs a path, so take the path from search output or ls.
+
+The refusal lists what is allowed:
+  qmd-ro: command not allowed: update (allowed: query, multi-get, status, ls,
+  collection (list), context (list))
+
+
+Exit codes
+----------
+  0    success
+  1    qmd could not answer: unknown collection or document, no vectors yet,
+       or a provider that is not configured
+  2    blocked by the read-only gate
+  5    cannot reach the host (network down, ssh key rejected), or the qmd
+       binary is missing on the server
+  130  interrupted (Ctrl-C)
+  other  passed through from qmd unchanged
+
+ssh itself uses 255. qmdr rewrites it to 5 so a dead link never looks like a
+search result.
+
+qmdr does not check flags. qmd ignores the ones it does not know, and each
+command reads only its own flags, so a typo or a flag on the wrong command
+falls back to default behavior instead of failing. The flag sections above
+say which command owns what: query reads every flag listed, multi-get reads
+only -l, --max-bytes and the output formats, and status, ls, collection list
+and context list take none of them.
+
+
+Search quality
+--------------
+Ask in natural language. Query expansion and reranking work on sentences;
+keyword piles work but recall drops.
+
+  good  qmdr query "what did we decide about the server migration"
+  weak  qmdr query "server migration decision"
+
+Score bands, useful when you must judge a hit yourself:
+  0.8 - 1.0  strong          show it
+  0.5 - 0.8  relevant        include when there are few hits
+  0.2 - 0.5  loosely related use only if the user wants more
+  0.0 - 0.2  noise           skip
+
+--all returns every match and ignores -n, so pair it with --min-score.
+
+Workflow that holds up:
+  1. qmdr status                                    what exists
+  2. qmdr query "question" --files --min-score 0.4  paths and scores
+  3. qmdr multi-get "<path from step 2>" -l 300     read the winners
+  4. widen with -n 20 or a lower --min-score        when step 2 is thin
+
+
+Troubleshooting
+---------------
+exit 5, "cannot reach <host>"
+    Wrong host, ssh key rejected, or no network. Check QMD_REMOTE_HOST, then
+    try ssh <host> true. Nothing to fix in qmdr.
+
+exit 5, "qmd binary not found on server"
+    qmd is missing from the remote PATH. Set QMD_RO_BIN on the server side.
+
+exit 2, "command not allowed"
+    The call is not read-only, or it is search or get. See the gate above.
+
+"qmd-ro not found"
+    The shim and qmd-ro live in one directory. Copy the whole remote/bin
+    directory, or point QMD_REMOTE_HOST at a host that has it.
+
+Calls feel slow
+    First call per 10 minutes pays the ssh handshake. Add --profile to see
+    where query time goes. Lower --timeout for a fast fail.
+
+Empty results
+    Wrong collection (-c), weak query wording, or an index that has never
+    been built. qmdr cannot build it: qmd update and qmd embed run on the
+    server, not through qmdr.
+
+
+More
+----
+Real qmd command set and every flag: run "qmd --help" where qmd is installed.

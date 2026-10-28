@@ -1,0 +1,36 @@
+qmdr - read-only search over markdown notes (remote or local)
+
+  qmdr query "<question>"      best results; ask in a full sentence
+  qmdr status                  index health and collection names
+  qmdr ls <collection>         list files in one collection
+  qmdr collection list         list collections
+  qmdr multi-get "<path>"      read whole documents
+
+query flags (only query reads these)
+  -n <num>         result count (default 5, 20 with --files/--json)
+  -c <name>        search one collection only
+  --min-score <n>  drop weak hits; 0.4 is a good start
+  --files          docid,score,path only, no snippets
+  --json           JSON output, easier to parse
+  --full           full text instead of a snippet
+
+multi-get flags
+  -l <num>         max lines per file
+  --files, --json  same meaning as above
+
+status, ls, collection list, context list read no flags.
+A flag on the wrong command is ignored, not an error.
+
+multi-get wants paths from search output or ls, not docids:
+  qmdr multi-get "qmd://notes/a.md" -l 200
+  qmdr multi-get "qmd://notes/a.md,qmd://notes/b.md"
+  qmdr multi-get "qmd://notes/*.md"
+
+Read-only. update, embed, cleanup, collection add and get are refused.
+There is no "qmdr get" - multi-get is how you read a file.
+
+Examples
+  qmdr query "what did we decide about the server migration"
+  qmdr query "how does login work" --files --min-score 0.4
+
+Full reference: qmdr --help
