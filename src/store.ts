@@ -23,6 +23,7 @@ import {
   type ILLMSession,
   RemoteLLM,
   type RemoteLLMConfig,
+  parseQueryExpansionSetting,
 } from "./llm";
 import {
   findContextForPath as collectionsFindContextForPath,
@@ -2240,13 +2241,16 @@ function getRemoteEmbedder(): RemoteLLM | null {
       rerankProvider = dsApiKey ? 'dashscope' : (sfApiKey ? 'openai' : (gmApiKey ? 'gemini' : (oaApiKey ? 'openai' : undefined)));
     }
   }
-  const queryExpansionProvider = (process.env.QMD_QUERY_EXPANSION_PROVIDER as 'siliconflow' | 'gemini' | 'openai' | undefined)
-    || (sfApiKey ? 'siliconflow' : (oaApiKey ? 'openai' : (gmApiKey ? 'gemini' : undefined)));
+  const queryExpansionSetting = parseQueryExpansionSetting(process.env.QMD_QUERY_EXPANSION_PROVIDER);
+  const queryExpansionProvider = queryExpansionSetting === 'none'
+    ? undefined
+    : (queryExpansionSetting || (sfApiKey ? 'siliconflow' : (oaApiKey ? 'openai' : (gmApiKey ? 'gemini' : undefined))));
   _remoteEmbedder = new RemoteLLM({
     rerankProvider: rerankProvider || 'siliconflow',
     rerankMode,
     embedProvider,
     queryExpansionProvider,
+    queryExpansionDisabled: queryExpansionSetting === 'none',
     siliconflow: {
       apiKey: sfApiKey || '',
       baseUrl: process.env.QMD_SILICONFLOW_BASE_URL,
@@ -2365,7 +2369,12 @@ export function insertEmbedding(
 
 export async function expandQuery(query: string, model: string = DEFAULT_QUERY_MODEL, db: Database): Promise<string[]> {
   void model;
-  // Check cache first
+  // Checked before the cache: stale expansion lines from an earlier enabled run
+  // must not come back after the user turns expansion off.
+  if (parseQueryExpansionSetting(process.env.QMD_QUERY_EXPANSION_PROVIDER) === 'none') {
+    return [query];
+  }
+
   const cacheKey = getCacheKey("expandQuery", { query, model });
   const cached = getCachedResult(db, cacheKey);
   if (cached) {

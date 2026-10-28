@@ -67,7 +67,7 @@ import {
   createStore,
   getDefaultDbPath,
 } from "./store.js";
-import { type ILLMSession, type RerankDocument, type Queryable, type QueryType, RemoteLLM, type RemoteLLMConfig } from "./llm.js";
+import { type ILLMSession, type RerankDocument, type Queryable, type QueryType, RemoteLLM, type RemoteLLMConfig, parseQueryExpansionSetting } from "./llm.js";
 import type { SearchResult, RankedResult } from "./store.js";
 import {
   formatSearchResults,
@@ -287,7 +287,8 @@ function getRemoteLLM(): RemoteLLM | null {
   // Check env vars for remote config
   const rerankProvider = process.env.QMD_RERANK_PROVIDER as 'siliconflow' | 'gemini' | 'openai' | 'dashscope' | undefined;
   const embedProvider = process.env.QMD_EMBED_PROVIDER as 'siliconflow' | 'openai' | undefined;
-  const queryExpansionProvider = process.env.QMD_QUERY_EXPANSION_PROVIDER as 'siliconflow' | 'gemini' | 'openai' | undefined;
+  const queryExpansionSetting = parseQueryExpansionSetting(process.env.QMD_QUERY_EXPANSION_PROVIDER);
+  const queryExpansionDisabled = queryExpansionSetting === 'none';
   const rerankMode = (process.env.QMD_RERANK_MODE as 'llm' | 'rerank' | undefined) || 'llm';
   const sfApiKey = process.env.QMD_SILICONFLOW_API_KEY;
   const gmApiKey = process.env.QMD_GEMINI_API_KEY;
@@ -323,7 +324,9 @@ function getRemoteLLM(): RemoteLLM | null {
     }
   }
   const effectiveEmbedProvider = embedProvider || (sfApiKey ? 'siliconflow' : (oaApiKey ? 'openai' : undefined));
-  const effectiveQueryExpansionProvider = queryExpansionProvider || (sfApiKey ? 'siliconflow' : (oaApiKey ? 'openai' : (gmApiKey ? 'gemini' : undefined)));
+  const effectiveQueryExpansionProvider = queryExpansionDisabled
+    ? undefined
+    : (queryExpansionSetting || (sfApiKey ? 'siliconflow' : (oaApiKey ? 'openai' : (gmApiKey ? 'gemini' : undefined))));
 
   // Need at least one remote provider configured
   if (!effectiveRerankProvider && !effectiveEmbedProvider && !effectiveQueryExpansionProvider) return null;
@@ -333,6 +336,7 @@ function getRemoteLLM(): RemoteLLM | null {
     rerankMode: rerankMode as 'llm' | 'rerank',
     embedProvider: effectiveEmbedProvider,
     queryExpansionProvider: effectiveQueryExpansionProvider,
+    queryExpansionDisabled,
   };
 
   // SiliconFlow config (shared by rerank, embed, query expansion)
@@ -2368,11 +2372,13 @@ async function vectorSearch(query: string, opts: OutputOptions, model: string = 
 
 // Expand query using structured output with GBNF grammar
 async function expandQueryStructured(query: string, includeLexical: boolean = true, context?: string, session?: ILLMSession, quiet?: boolean): Promise<Queryable[]> {
-  if (!quiet) process.stderr.write(`${c.dim}Expanding query...${c.reset}\n`);
+  const expansionDisabled = parseQueryExpansionSetting(process.env.QMD_QUERY_EXPANSION_PROVIDER) === 'none';
+  if (!quiet && !expansionDisabled) process.stderr.write(`${c.dim}Expanding query...${c.reset}\n`);
   const queryables = await llmService.expandQuery(query, { includeLexical, context }, session);
 
-  // Log the expansion as a tree
-  if (!quiet) {
+  // Log the expansion as a tree — skipped when off, or it prints a one-line
+  // "expansion" that was never expanded.
+  if (!quiet && !expansionDisabled) {
     const lines: string[] = [];
     const bothLabel = includeLexical ? ' · (lexical+vector)' : ' · (vector)';
     lines.push(`${c.dim}├─ ${query}${bothLabel}${c.reset}`);
@@ -3028,8 +3034,11 @@ async function doctorCommand(bench = false): Promise<void> {
   }
   const embedProvider = (runtime.QMD_EMBED_PROVIDER as "siliconflow" | "openai" | undefined)
     || (sfKeyRuntime ? "siliconflow" : (oaKeyRuntime ? "openai" : undefined));
-  const queryExpansionProvider = (runtime.QMD_QUERY_EXPANSION_PROVIDER as "siliconflow" | "gemini" | "openai" | undefined)
-    || (sfKeyRuntime ? "siliconflow" : (oaKeyRuntime ? "openai" : (gmKeyRuntime ? "gemini" : undefined)));
+  const queryExpansionSetting = parseQueryExpansionSetting(runtime.QMD_QUERY_EXPANSION_PROVIDER);
+  const queryExpansionDisabled = queryExpansionSetting === "none";
+  const queryExpansionProvider = queryExpansionDisabled
+    ? undefined
+    : (queryExpansionSetting || (sfKeyRuntime ? "siliconflow" : (oaKeyRuntime ? "openai" : (gmKeyRuntime ? "gemini" : undefined))));
 
   const effectiveEmbedModel = embedProvider === "openai"
     ? (runtime.QMD_OPENAI_EMBED_MODEL || "text-embedding-3-small")
@@ -3073,7 +3082,11 @@ async function doctorCommand(bench = false): Promise<void> {
   console.log(`  QMD_EMBED_PROVIDER: ${runtime.QMD_EMBED_PROVIDER || "<未设置>"}`);
   console.log(`  QMD_EMBED_DIMENSIONS: ${runtime.QMD_EMBED_DIMENSIONS || "<未设置，使用模型原生维度>"}`);
   console.log(`  QMD_EMBED_PROMPT_STYLE: ${runtime.QMD_EMBED_PROMPT_STYLE || "<未设置，按模型名自动识别>"}`);
-  console.log(`  QMD_QUERY_EXPANSION_PROVIDER: ${runtime.QMD_QUERY_EXPANSION_PROVIDER || "<未设置>"}`);
+  const rawExpansionSetting = runtime.QMD_QUERY_EXPANSION_PROVIDER;
+  const shownExpansionSetting = rawExpansionSetting?.trim()
+    ? rawExpansionSetting
+    : (rawExpansionSetting === undefined ? "<未设置>" : "<空值>");
+  console.log(`  QMD_QUERY_EXPANSION_PROVIDER: ${shownExpansionSetting}${queryExpansionDisabled ? "（已禁用）" : ""}`);
   console.log(`  QMD_RERANK_PROVIDER: ${runtime.QMD_RERANK_PROVIDER || "<未设置>"}`);
   console.log(`  QMD_RERANK_MODE: ${runtime.QMD_RERANK_MODE || "<未设置，默认llm>"}`);
   if (dsKeyRuntime) {
@@ -3124,7 +3137,9 @@ async function doctorCommand(bench = false): Promise<void> {
 
   console.log("\n当前生效的 Provider / 模型:");
   console.log(`  向量化 (embed): ${embedProvider || "本地"} → ${embedProvider ? effectiveEmbedModel : "本地 embeddinggemma"}`);
-  console.log(`  查询扩展 (query expansion): ${queryExpansionProvider || "本地"} → ${queryExpansionProvider ? effectiveQueryExpansionModel : "本地 qmd-query-expansion"}`);
+  console.log(`  查询扩展 (query expansion): ${queryExpansionDisabled
+    ? "已禁用（跳过扩展，仅用原始查询）"
+    : (queryExpansionProvider ? `${queryExpansionProvider} → ${effectiveQueryExpansionModel}` : "无（仅用原始查询）")}`);
   const rerankModel = rerankProvider === "siliconflow" ? effectiveSfRerankModel
     : rerankProvider === "gemini" ? effectiveGmModel
     : rerankProvider === "openai" ? effectiveOaModel
@@ -3195,7 +3210,7 @@ async function doctorCommand(bench = false): Promise<void> {
         console.log(`  查询扩展 (${queryExpansionProvider}): ❌ 失败 - ${err instanceof Error ? err.message : err}`);
       }
     } else {
-      console.log("  查询扩展: 跳过（本地模式）");
+      console.log(`  查询扩展: 跳过（${queryExpansionDisabled ? "已禁用" : "未配置 provider"}）`);
     }
 
     // 测试 rerank

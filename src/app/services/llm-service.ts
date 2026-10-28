@@ -1,5 +1,6 @@
 import {
   RemoteLLM,
+  parseQueryExpansionSetting,
   type ILLMSession,
   type Queryable,
   type RerankDocument,
@@ -10,7 +11,8 @@ import type { LLMPort, ExpandOptions } from "../ports/llm.js";
 function createRemoteConfigFromEnv(): RemoteLLMConfig | null {
   const rerankProvider = process.env.QMD_RERANK_PROVIDER as "siliconflow" | "gemini" | "openai" | "dashscope" | undefined;
   const embedProvider = process.env.QMD_EMBED_PROVIDER as "siliconflow" | "openai" | undefined;
-  const queryExpansionProvider = process.env.QMD_QUERY_EXPANSION_PROVIDER as "siliconflow" | "gemini" | "openai" | undefined;
+  const queryExpansionSetting = parseQueryExpansionSetting(process.env.QMD_QUERY_EXPANSION_PROVIDER);
+  const queryExpansionDisabled = queryExpansionSetting === "none";
   const rerankMode = (process.env.QMD_RERANK_MODE as "llm" | "rerank" | undefined) || "llm";
   const sfApiKey = process.env.QMD_SILICONFLOW_API_KEY;
   const gmApiKey = process.env.QMD_GEMINI_API_KEY;
@@ -48,8 +50,9 @@ function createRemoteConfigFromEnv(): RemoteLLMConfig | null {
 
   const effectiveEmbedProvider = embedProvider
     || (sfApiKey ? "siliconflow" : (oaApiKey ? "openai" : undefined));
-  const effectiveQueryExpansionProvider = queryExpansionProvider
-    || (sfApiKey ? "siliconflow" : (oaApiKey ? "openai" : (gmApiKey ? "gemini" : undefined)));
+  const effectiveQueryExpansionProvider = queryExpansionDisabled
+    ? undefined
+    : (queryExpansionSetting || (sfApiKey ? "siliconflow" : (oaApiKey ? "openai" : (gmApiKey ? "gemini" : undefined))));
 
   if (!effectiveRerankProvider && !effectiveEmbedProvider && !effectiveQueryExpansionProvider) {
     return null;
@@ -60,6 +63,7 @@ function createRemoteConfigFromEnv(): RemoteLLMConfig | null {
     rerankMode,
     embedProvider: effectiveEmbedProvider,
     queryExpansionProvider: effectiveQueryExpansionProvider,
+    queryExpansionDisabled,
   };
 
   if (sfApiKey) {
@@ -103,6 +107,7 @@ function createRemoteConfigFromEnv(): RemoteLLMConfig | null {
 export function createLLMService(): LLMPort {
   const remoteConfig = createRemoteConfigFromEnv();
   const remote = remoteConfig ? new RemoteLLM(remoteConfig) : null;
+  const queryExpansionDisabled = remoteConfig?.queryExpansionDisabled === true;
 
   type ProviderName = "siliconflow" | "gemini" | "openai" | "dashscope";
   const providerHealth = new Map<ProviderName, { consecutiveFailures: number; cooldownUntilMs: number }>();
@@ -161,7 +166,7 @@ export function createLLMService(): LLMPort {
       // degrade to lexical-only.
       const lexicalFallback = (): Queryable[] => (includeLexical ? [{ type: "lex", text: query }] : []);
 
-      if (!remote || !provider || !hasRemoteProviderKey(provider)) {
+      if (!remote || queryExpansionDisabled || !provider || !hasRemoteProviderKey(provider)) {
         return lexicalFallback();
       }
       if (isCoolingDown(provider)) {

@@ -268,11 +268,30 @@ export interface LLM {
   dispose(): Promise<void>;
 }
 
+export type QueryExpansionSetting = 'siliconflow' | 'gemini' | 'openai' | 'none';
+
+/**
+ * 'none' is an explicit opt-out: it stops the API-key fallback from picking a
+ * provider. Without it, any SiliconFlow key silently routes expansion to
+ * zai-org/GLM-4.5-Air, which a custom endpoint usually does not serve.
+ * An unknown value means off too — a typo must not re-enable that fallback.
+ * A blank value (`QMD_QUERY_EXPANSION_PROVIDER=`) is a deliberate off as well;
+ * only an absent variable falls back to the key-based auto-pick.
+ */
+export function parseQueryExpansionSetting(raw: string | undefined): QueryExpansionSetting | undefined {
+  if (raw === undefined) return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === 'siliconflow' || value === 'gemini' || value === 'openai') return value;
+  return 'none';
+}
+
 export type RemoteLLMConfig = {
   rerankProvider: 'siliconflow' | 'gemini' | 'openai' | 'dashscope';
   rerankMode?: 'llm' | 'rerank'; // 'llm' = chat model, 'rerank' = dedicated rerank API
   embedProvider?: 'siliconflow' | 'openai'; // remote embedding provider (optional)
   queryExpansionProvider?: 'siliconflow' | 'gemini' | 'openai'; // remote query expansion (optional)
+  /** True when QMD_QUERY_EXPANSION_PROVIDER=none — never fall back to a key-based provider. */
+  queryExpansionDisabled?: boolean;
   /** Optional per-operation timeouts (ms). */
   timeoutsMs?: {
     embed?: number;
@@ -532,6 +551,10 @@ export class RemoteLLM implements LLM {
     query: string,
     options?: { context?: string; includeLexical?: boolean }
   ): Promise<Queryable[]> {
+    if (this.config.queryExpansionDisabled) {
+      const includeLexicalOnly = options?.includeLexical ?? true;
+      return includeLexicalOnly ? [{ type: 'lex', text: query }] : [];
+    }
     if (this.config.queryExpansionProvider === 'siliconflow') {
       return this.expandQueryWithSiliconflow(query, options);
     }

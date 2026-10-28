@@ -106,9 +106,11 @@ QMD_SILICONFLOW_API_KEY=sk-xxx
 QMD_SILICONFLOW_BASE_URL=https://your-endpoint/v1
 QMD_SILICONFLOW_RERANK_MODEL=Qwen/Qwen3-Reranker-8B
 
-# --- query expansion still needs a chat model ---
+# --- query expansion (optional: needs a chat model) ---
 QMD_QUERY_EXPANSION_PROVIDER=openai
 QMD_OPENAI_MODEL=Qwen/Qwen3-8B
+# No chat model on this endpoint? Disable it instead:
+# QMD_QUERY_EXPANSION_PROVIDER=none
 ```
 
 Then `qmd embed -f` (model + dimension changed) and `qmd doctor` (it compares the DB vector dimension against a live embedding probe).
@@ -120,6 +122,8 @@ Notes:
 - **Dimensions.** `QMD_EMBED_DIMENSIONS` is optional and is sent as the `dimensions` field on every embedding request. If your endpoint returns 2048 natively (server-side MRL truncation), or rejects the field, omit it — the model's native size is used instead.
 - **Prompt format.** Qwen3-Embedding is trained with `Instruct: …\nQuery: …` on the query side and raw text on the document side, so QMDR detects Qwen3-Embedding from the model name and switches format automatically. `QMD_EMBED_PROMPT_STYLE=gemma|qwen3` forces either style (`gemma` = the old `title:/task:` prefixes, still used for every other model), and `QMD_EMBED_QUERY_INSTRUCT` replaces the instruction text. Changing the style means a rebuild: `qmd embed -f`.
 - **Why `siliconflow` for the reranker.** The `siliconflow` rerank provider is a generic Cohere-style client (`POST {base}/rerank`, body `{model, query, documents, top_n}`, reads `results[].relevance_score`). It works with any compatible gateway (vLLM `/rerank`, SiliconFlow, Jina, TEI). `QMD_RERANK_PROVIDER=openai` is *LLM* rerank (chat completions), which a cross-encoder like Qwen3-Reranker cannot serve.
+- **Query expansion is optional.** Set `QMD_QUERY_EXPANSION_PROVIDER=none` to turn it off: only expansion is skipped, BM25 and vector search still run, and the cache cannot bring old expansion lines back. Any other value counts as `none` — including a typo and a blank `QMD_QUERY_EXPANSION_PROVIDER=` — so neither can re-enable it. Only a variable you never set falls back to the key-based auto-pick. Left unset while `QMD_SILICONFLOW_API_KEY` exists, the slot auto-picks `siliconflow` and calls `zai-org/GLM-4.5-Air` against your endpoint. That fails 3 times on every query — expansion errors are swallowed, so no cooldown ever kicks in. Set the slot explicitly.
+- **When expansion is off or has no provider** the query still runs, using only the original query (BM25 + vector). **When a call fails** it degrades to the built-in local expansion instead (`lex` + `vec` + a synthetic `hyde` line). Neither case needs a chat model, and neither blocks a search.
 - **`QMD_OPENAI_MODEL` matters.** Setting `QMD_SILICONFLOW_API_KEY` makes the OpenAI slot fall back to `zai-org/GLM-4.5-Air` when `QMD_OPENAI_MODEL` is unset — set it explicitly to a chat model your endpoint actually serves.
 - **Timeouts.** An 8B reranker behind a gateway can exceed the 15s default. `QMD_TIMEOUT_MS=60000` covers it; or lower `QMD_RERANK_DOC_LIMIT` / `QMD_RERANK_CHUNKS_PER_DOC`.
 
@@ -273,7 +277,7 @@ QMD_SILICONFLOW_API_KEY	—	Required
 QMD_GEMINI_API_KEY	—	Recommended (reranking)
 QMD_OPENAI_API_KEY	—	Optional (custom endpoint)
 QMD_EMBED_PROVIDER	auto	siliconflow / openai
-QMD_QUERY_EXPANSION_PROVIDER	auto	siliconflow / gemini / openai
+QMD_QUERY_EXPANSION_PROVIDER	auto	siliconflow / gemini / openai / none (off)
 QMD_RERANK_PROVIDER	auto	siliconflow / gemini / openai / dashscope
 QMD_RERANK_MODE	llm	llm / rerank (dedicated API)
 QMD_SILICONFLOW_BASE_URL	https://api.siliconflow.cn/v1	International: .com
