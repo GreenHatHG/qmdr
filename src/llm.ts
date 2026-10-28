@@ -11,7 +11,12 @@ import { join } from "node:path";
 // Embedding Formatting Functions
 // =============================================================================
 
-export type EmbedPromptStyle = "gemma" | "qwen3";
+/**
+ * gemma: EmbeddingGemma `task:/title:` prefixes.
+ * qwen3: `Instruct: …\nQuery: …` on queries, raw text on documents.
+ * none:  raw text on both sides (bge-m3 and other models with no prefix).
+ */
+export type EmbedPromptStyle = "gemma" | "qwen3" | "none";
 
 /** Qwen3-Embedding's own default instruction for retrieval tasks. */
 const DEFAULT_QWEN3_QUERY_INSTRUCT =
@@ -37,21 +42,29 @@ function configuredEmbedModel(): string | undefined {
  *
  * Qwen3-Embedding was trained with `Instruct: …\nQuery: …` on the query side
  * and raw text on the document side, so the gemma pins hurt it.
- * Override with QMD_EMBED_PROMPT_STYLE=gemma|qwen3 when auto-detection guesses wrong.
+ * bge-m3 takes raw text on both sides — BAAI: "no longer requires adding
+ * instructions to the queries".
+ * Override with QMD_EMBED_PROMPT_STYLE=gemma|qwen3|none when auto-detection
+ * guesses wrong.
  */
 export function resolveEmbedPromptStyle(model?: string): EmbedPromptStyle {
   const override = process.env.QMD_EMBED_PROMPT_STYLE;
-  if (override === "gemma" || override === "qwen3") return override;
+  if (override === "gemma" || override === "qwen3" || override === "none") return override;
   const name = model || configuredEmbedModel() || "";
-  return /qwen3[-_]?embedding/i.test(name) ? "qwen3" : "gemma";
+  if (/qwen3[-_]?embedding/i.test(name)) return "qwen3";
+  if (/bge[-_]?m3/i.test(name)) return "none";
+  return "gemma";
 }
 
 /**
  * Format a query for embedding.
  * embeddinggemma: nomic-style task prefix. Qwen3: Instruct/Query pair.
+ * none: the query goes in verbatim.
  */
 export function formatQueryForEmbedding(query: string, model?: string): string {
-  if (resolveEmbedPromptStyle(model) === "qwen3") {
+  const style = resolveEmbedPromptStyle(model);
+  if (style === "none") return query;
+  if (style === "qwen3") {
     const instruct = process.env.QMD_EMBED_QUERY_INSTRUCT || DEFAULT_QWEN3_QUERY_INSTRUCT;
     return `Instruct: ${instruct}\nQuery: ${query}`;
   }
@@ -60,10 +73,10 @@ export function formatQueryForEmbedding(query: string, model?: string): string {
 
 /**
  * Format a document for embedding.
- * embeddinggemma: title + text fields. Qwen3: raw text, no instruction.
+ * embeddinggemma: title + text fields. Qwen3 / none: raw text, no instruction.
  */
 export function formatDocForEmbedding(text: string, title?: string, model?: string): string {
-  if (resolveEmbedPromptStyle(model) === "qwen3") return text;
+  if (resolveEmbedPromptStyle(model) !== "gemma") return text;
   return `title: ${title || "none"} | text: ${text}`;
 }
 

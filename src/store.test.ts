@@ -561,6 +561,22 @@ describe("Embedding Formatting", () => {
     }
   });
 
+  test("bge-m3 gets no prefix on either side", () => {
+    const model = "BAAI/bge-m3";
+    // bge-m3 was not trained with the gemma markers; they only add noise.
+    expect(formatQueryForEmbedding("how to deploy", model)).toBe("how to deploy");
+    expect(formatDocForEmbedding("Some content", "My Title", model)).toBe("Some content");
+  });
+
+  test("QMD_EMBED_PROMPT_STYLE=none strips prefixes for any model", () => {
+    process.env.QMD_EMBED_PROMPT_STYLE = "none";
+    try {
+      expect(formatQueryForEmbedding("q", "Qwen/Qwen3-Embedding-8B")).toBe("q");
+    } finally {
+      delete process.env.QMD_EMBED_PROMPT_STYLE;
+    }
+  });
+
   test("siliconflow default model is Qwen3-Embedding-8B, so queries use Instruct format", () => {
     process.env.QMD_SILICONFLOW_API_KEY = "sk-test";
     // No QMD_SILICONFLOW_EMBED_MODEL: the provider default model applies.

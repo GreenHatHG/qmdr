@@ -6,7 +6,8 @@ QMDR 的所有重要变更记录。
 
 ### 新增
 - `QMD_EMBED_DIMENSIONS` — 向 embedding 请求附加 OpenAI 兼容的 `dimensions` 字段（Matryoshka 截断），例如 Qwen3-Embedding-8B 用 2048 维；不设置则用模型原生维度
-- Qwen3-Embedding 专用 prompt 格式：从模型名自动识别（含 provider 默认模型，如 SiliconFlow 默认的 Qwen/Qwen3-Embedding-8B），查询用 `Instruct: …\nQuery: …`，文档用裸文本（其他模型保持 embeddinggemma 风格）。可用 `QMD_EMBED_PROMPT_STYLE=gemma|qwen3` 强制、`QMD_EMBED_QUERY_INSTRUCT` 覆盖指令文本
+- Qwen3-Embedding 专用 prompt 格式：从模型名自动识别（含 provider 默认模型，如 SiliconFlow 默认的 Qwen/Qwen3-Embedding-8B），查询用 `Instruct: …\nQuery: …`，文档用裸文本（其他模型保持 embeddinggemma 风格）。可用 `QMD_EMBED_PROMPT_STYLE=gemma|qwen3|none` 强制、`QMD_EMBED_QUERY_INSTRUCT` 覆盖指令文本
+- bge-m3 从模型名自动识别，查询和文档都用裸文本（不加任何前缀）；`QMD_EMBED_PROMPT_STYLE=none` 可手动关掉前缀
 - `.env.qwen3.example` — Qwen3-Embedding-8B (2048d) + Qwen3-Reranker-8B 开箱模板，只填 base URL 和 key
 - `qmd doctor` 显示 `QMD_EMBED_DIMENSIONS`
 - AI-SETUP.md 新增自定义 OpenAI 兼容端点章节

@@ -74,7 +74,7 @@ QMD_RERANK_MODE=llm
 QMD_LLM_RERANK_MODEL=Qwen/Qwen2.5-7B-Instruct
 ```
 
-> Free tier uses bge-m3 (1024d) instead of Qwen3-Embedding-8B (4096d), and Qwen2.5-7B for query expansion/reranking instead of GLM-4.5-Air. Chinese retrieval quality is slightly lower but still good. Switching models requires `qmd embed -f` to rebuild vectors.
+> Free tier uses bge-m3 (1024d) instead of Qwen3-Embedding-8B (4096d), and Qwen2.5-7B for query expansion/reranking instead of GLM-4.5-Air. Chinese retrieval quality is slightly lower but still good. bge-m3 takes raw text with no prompt prefix and its dense output is fixed at 1024 dims, so do not set `QMD_EMBED_DIMENSIONS`. Switching models requires `qmd embed -f` to rebuild vectors.
 
 ```env
 # Optional: custom OpenAI-compatible endpoint
@@ -120,7 +120,7 @@ Keep every comment on its own line — the `.env` loader does not strip inline c
 Notes:
 
 - **Dimensions.** `QMD_EMBED_DIMENSIONS` is optional and is sent as the `dimensions` field on every embedding request. If your endpoint returns 2048 natively (server-side MRL truncation), or rejects the field, omit it — the model's native size is used instead.
-- **Prompt format.** Qwen3-Embedding is trained with `Instruct: …\nQuery: …` on the query side and raw text on the document side, so QMDR detects Qwen3-Embedding from the model name and switches format automatically. `QMD_EMBED_PROMPT_STYLE=gemma|qwen3` forces either style (`gemma` = the old `title:/task:` prefixes, still used for every other model), and `QMD_EMBED_QUERY_INSTRUCT` replaces the instruction text. Changing the style means a rebuild: `qmd embed -f`.
+- **Prompt format.** Qwen3-Embedding is trained with `Instruct: …\nQuery: …` on the query side and raw text on the document side, so QMDR detects Qwen3-Embedding from the model name and switches format automatically. bge-m3 was trained with no prefix at all, so it is detected too and gets raw text on both sides. `QMD_EMBED_PROMPT_STYLE=gemma|qwen3|none` forces one style (`gemma` = the old `title:/task:` prefixes, still used for every other model), and `QMD_EMBED_QUERY_INSTRUCT` replaces the Qwen3 instruction text. Changing the style means a rebuild: `qmd embed -f`.
 - **Why `siliconflow` for the reranker.** The `siliconflow` rerank provider is a generic Cohere-style client (`POST {base}/rerank`, body `{model, query, documents, top_n}`, reads `results[].relevance_score`). It works with any compatible gateway (vLLM `/rerank`, SiliconFlow, Jina, TEI). `QMD_RERANK_PROVIDER=openai` is *LLM* rerank (chat completions), which a cross-encoder like Qwen3-Reranker cannot serve.
 - **Query expansion is optional.** Set `QMD_QUERY_EXPANSION_PROVIDER=none` to turn it off: only expansion is skipped, BM25 and vector search still run, and the cache cannot bring old expansion lines back. Any other value counts as `none` — including a typo and a blank `QMD_QUERY_EXPANSION_PROVIDER=` — so neither can re-enable it. Only a variable you never set falls back to the key-based auto-pick. Left unset while `QMD_SILICONFLOW_API_KEY` exists, the slot auto-picks `siliconflow` and calls `zai-org/GLM-4.5-Air` against your endpoint. That fails 3 times on every query — expansion errors are swallowed, so no cooldown ever kicks in. Set the slot explicitly.
 - **When expansion is off or has no provider** the query still runs, using only the original query (BM25 + vector). **When a call fails** it degrades to the built-in local expansion instead (`lex` + `vec` + a synthetic `hyde` line). Neither case needs a chat model, and neither blocks a search.
