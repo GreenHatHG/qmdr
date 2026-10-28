@@ -2276,8 +2276,6 @@ function getRemoteEmbedder(): RemoteLLM | null {
 
 async function getEmbedding(text: string, model: string, isQuery: boolean, session?: ILLMSession): Promise<number[] | null> {
   void session;
-  // Format text using the appropriate prompt template
-  const formattedText = isQuery ? formatQueryForEmbedding(text) : formatDocForEmbedding(text);
 
   const remote = getRemoteEmbedder();
   if (!remote) {
@@ -2289,6 +2287,11 @@ async function getEmbedding(text: string, model: string, isQuery: boolean, sessi
   // If the caller uses DEFAULT_EMBED_MODEL, let RemoteLLM pick provider-appropriate defaults
   // (or env-specific overrides like QMD_OPENAI_EMBED_MODEL / QMD_SILICONFLOW_EMBED_MODEL).
   const effectiveModel = model === DEFAULT_EMBED_MODEL ? undefined : model;
+  // Format text with the prompt style of the model that will actually run.
+  const formattedText = isQuery
+    ? formatQueryForEmbedding(text, effectiveModel)
+    : formatDocForEmbedding(text, undefined, effectiveModel);
+
   const result = await remote.embed(formattedText, { model: effectiveModel, isQuery });
   return result?.embedding || null;
 }

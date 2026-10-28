@@ -499,6 +499,36 @@ describe("Document Helpers", () => {
 // =============================================================================
 
 describe("Embedding Formatting", () => {
+  // These tests pin the default (non-Qwen3) format, so the ambient model env
+  // vars must not leak in from the developer's shell.
+  const envKeys = [
+    "QMD_EMBED_PROVIDER",
+    "QMD_OPENAI_EMBED_MODEL",
+    "QMD_SILICONFLOW_EMBED_MODEL",
+    "QMD_EMBED_PROMPT_STYLE",
+    "QMD_EMBED_QUERY_INSTRUCT",
+    // API keys drive provider auto-routing, which picks the default embed model.
+    "QMD_SILICONFLOW_API_KEY",
+    "QMD_OPENAI_API_KEY",
+  ] as const;
+  const saved = new Map<string, string | undefined>();
+
+  beforeEach(() => {
+    for (const key of envKeys) {
+      saved.set(key, process.env[key]);
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of envKeys) {
+      const value = saved.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    saved.clear();
+  });
+
   test("formatQueryForEmbedding adds search task prefix", () => {
     const formatted = formatQueryForEmbedding("how to deploy");
     expect(formatted).toBe("task: search result | query: how to deploy");
@@ -512,6 +542,30 @@ describe("Embedding Formatting", () => {
   test("formatDocForEmbedding handles missing title", () => {
     const formatted = formatDocForEmbedding("Some content");
     expect(formatted).toBe("title: none | text: Some content");
+  });
+
+  test("qwen3 models get Instruct/Query on queries and raw text on documents", () => {
+    const model = "Qwen/Qwen3-Embedding-8B";
+    expect(formatQueryForEmbedding("how to deploy", model)).toBe(
+      "Instruct: Given a search query, retrieve relevant passages that answer the query\nQuery: how to deploy"
+    );
+    expect(formatDocForEmbedding("Some content", "My Title", model)).toBe("Some content");
+  });
+
+  test("QMD_EMBED_PROMPT_STYLE overrides model auto-detection", () => {
+    process.env.QMD_EMBED_PROMPT_STYLE = "qwen3";
+    try {
+      expect(formatQueryForEmbedding("q", "text-embedding-3-small")).toContain("Instruct: ");
+    } finally {
+      delete process.env.QMD_EMBED_PROMPT_STYLE;
+    }
+  });
+
+  test("siliconflow default model is Qwen3-Embedding-8B, so queries use Instruct format", () => {
+    process.env.QMD_SILICONFLOW_API_KEY = "sk-test";
+    // No QMD_SILICONFLOW_EMBED_MODEL: the provider default model applies.
+    expect(formatQueryForEmbedding("q")).toContain("Instruct: ");
+    expect(formatDocForEmbedding("doc", "T")).toBe("doc");
   });
 });
 

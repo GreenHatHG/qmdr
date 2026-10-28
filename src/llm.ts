@@ -11,20 +11,83 @@ import { join } from "node:path";
 // Embedding Formatting Functions
 // =============================================================================
 
+export type EmbedPromptStyle = "gemma" | "qwen3";
+
+/** Qwen3-Embedding's own default instruction for retrieval tasks. */
+const DEFAULT_QWEN3_QUERY_INSTRUCT =
+  "Given a search query, retrieve relevant passages that answer the query";
+
+/** Which embedding model the configured provider will actually call. */
+function configuredEmbedModel(): string | undefined {
+  // Mirrors the provider auto-routing in getRemoteLLM()/getRemoteEmbedder(),
+  // including their per-provider default models — otherwise the query path
+  // (model = undefined) would format for gemma while the index path formats
+  // for Qwen3, mixing both styles in one index.
+  const provider = process.env.QMD_EMBED_PROVIDER
+    ?? (process.env.QMD_SILICONFLOW_API_KEY
+      ? "siliconflow"
+      : (process.env.QMD_OPENAI_API_KEY ? "openai" : undefined));
+  if (provider === "openai") return process.env.QMD_OPENAI_EMBED_MODEL || "text-embedding-3-small";
+  if (provider === "siliconflow") return process.env.QMD_SILICONFLOW_EMBED_MODEL || "Qwen/Qwen3-Embedding-8B";
+  return process.env.QMD_OPENAI_EMBED_MODEL || process.env.QMD_SILICONFLOW_EMBED_MODEL;
+}
+
+/**
+ * Pick the prompt format for the embedding model.
+ *
+ * Qwen3-Embedding was trained with `Instruct: …\nQuery: …` on the query side
+ * and raw text on the document side, so the gemma pins hurt it.
+ * Override with QMD_EMBED_PROMPT_STYLE=gemma|qwen3 when auto-detection guesses wrong.
+ */
+export function resolveEmbedPromptStyle(model?: string): EmbedPromptStyle {
+  const override = process.env.QMD_EMBED_PROMPT_STYLE;
+  if (override === "gemma" || override === "qwen3") return override;
+  const name = model || configuredEmbedModel() || "";
+  return /qwen3[-_]?embedding/i.test(name) ? "qwen3" : "gemma";
+}
+
 /**
  * Format a query for embedding.
- * Uses nomic-style task prefix format for embeddinggemma.
+ * embeddinggemma: nomic-style task prefix. Qwen3: Instruct/Query pair.
  */
-export function formatQueryForEmbedding(query: string): string {
+export function formatQueryForEmbedding(query: string, model?: string): string {
+  if (resolveEmbedPromptStyle(model) === "qwen3") {
+    const instruct = process.env.QMD_EMBED_QUERY_INSTRUCT || DEFAULT_QWEN3_QUERY_INSTRUCT;
+    return `Instruct: ${instruct}\nQuery: ${query}`;
+  }
   return `task: search result | query: ${query}`;
 }
 
 /**
  * Format a document for embedding.
- * Uses nomic-style format with title and text fields.
+ * embeddinggemma: title + text fields. Qwen3: raw text, no instruction.
  */
-export function formatDocForEmbedding(text: string, title?: string): string {
+export function formatDocForEmbedding(text: string, title?: string, model?: string): string {
+  if (resolveEmbedPromptStyle(model) === "qwen3") return text;
   return `title: ${title || "none"} | text: ${text}`;
+}
+
+/**
+ * Optional embedding dimension override (Matryoshka / MRL truncation).
+ *
+ * Set QMD_EMBED_DIMENSIONS=2048 to send the OpenAI-compatible `dimensions`
+ * field on every embedding request. Supported by e.g. Qwen3-Embedding
+ * (32–4096) and text-embedding-3-* (256–3072).
+ *
+ * Leave unset to use the model's native dimension.
+ */
+export function embedDimensionsFromEnv(): number | undefined {
+  const raw = process.env.QMD_EMBED_DIMENSIONS;
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.round(parsed);
+}
+
+/** Attach the optional `dimensions` field to an embedding request body. */
+function withEmbedDimensions(body: Record<string, unknown>): Record<string, unknown> {
+  const dimensions = embedDimensionsFromEnv();
+  return dimensions ? { ...body, dimensions } : body;
 }
 
 // =============================================================================
@@ -540,11 +603,11 @@ export class RemoteLLM implements LLM {
           Authorization: `Bearer ${sf.apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
+        body: JSON.stringify(withEmbedDimensions({
           model,
           input: text,
           encoding_format: "float",
-        }),
+        })),
       }, { provider: "siliconflow", operation: "embed", timeoutMs: options?.timeoutMs ?? this.config.timeoutsMs?.embed });
 
       const data = await resp.json() as {
@@ -595,11 +658,11 @@ export class RemoteLLM implements LLM {
             Authorization: `Bearer ${sf.apiKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
+          body: JSON.stringify(withEmbedDimensions({
             model,
             input: batch,
             encoding_format: "float",
-          }),
+          })),
         }, { provider: "siliconflow", operation: "embed", timeoutMs: this.config.timeoutsMs?.embed });
 
         const data = await resp.json() as {
@@ -1029,7 +1092,7 @@ export class RemoteLLM implements LLM {
         Authorization: `Bearer ${oa.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model, input: text }),
+      body: JSON.stringify(withEmbedDimensions({ model, input: text })),
     }, { provider: "openai", operation: "embed", timeoutMs: options?.timeoutMs ?? this.config.timeoutsMs?.embed });
 
     const data = await resp.json() as {
@@ -1061,7 +1124,7 @@ export class RemoteLLM implements LLM {
             Authorization: `Bearer ${oa.apiKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ model, input: batch }),
+          body: JSON.stringify(withEmbedDimensions({ model, input: batch })),
         }, { provider: "openai", operation: "embed", timeoutMs: this.config.timeoutsMs?.embed });
 
         const data = await resp.json() as {

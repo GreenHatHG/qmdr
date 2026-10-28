@@ -1841,7 +1841,7 @@ async function vectorIndex(model: string = DEFAULT_EMBED_MODEL, force: boolean =
   if (!firstChunk) {
     throw new Error("No chunks available to embed");
   }
-  const firstText = formatDocForEmbedding(firstChunk.text, firstChunk.title);
+  const firstText = formatDocForEmbedding(firstChunk.text, firstChunk.title, remoteModel);
   const firstResult = await remote.embed(firstText, { model: remoteModel, isQuery: false });
   if (!firstResult) {
     throw new Error("Failed to get embedding dimensions from remote provider");
@@ -1855,7 +1855,7 @@ async function vectorIndex(model: string = DEFAULT_EMBED_MODEL, force: boolean =
   for (let batchStart = 0; batchStart < allChunks.length; batchStart += BATCH_SIZE) {
     const batchEnd = Math.min(batchStart + BATCH_SIZE, allChunks.length);
     const batch = allChunks.slice(batchStart, batchEnd);
-    const texts = batch.map(chunk => formatDocForEmbedding(chunk.text, chunk.title));
+    const texts = batch.map(chunk => formatDocForEmbedding(chunk.text, chunk.title, remoteModel));
 
     try {
       const embeddings = await remote.embedBatch(texts);
@@ -1874,7 +1874,7 @@ async function vectorIndex(model: string = DEFAULT_EMBED_MODEL, force: boolean =
     } catch (err) {
       for (const chunk of batch) {
         try {
-          const text = formatDocForEmbedding(chunk.text, chunk.title);
+          const text = formatDocForEmbedding(chunk.text, chunk.title, remoteModel);
           const result = await remote.embed(text, { model: remoteModel, isQuery: false });
           if (result) {
             insertEmbedding(db, chunk.hash, chunk.seq, chunk.pos, new Float32Array(result.embedding), remoteModel, now);
@@ -3071,6 +3071,8 @@ async function doctorCommand(bench = false): Promise<void> {
   console.log(`  QMD_OPENAI_API_KEY: ${oaKeyRuntime ? "<已设置>" : "<未设置>"}`);
   console.log(`  QMD_DASHSCOPE_API_KEY: ${dsKeyRuntime ? "<已设置>" : "<未设置>"}`);
   console.log(`  QMD_EMBED_PROVIDER: ${runtime.QMD_EMBED_PROVIDER || "<未设置>"}`);
+  console.log(`  QMD_EMBED_DIMENSIONS: ${runtime.QMD_EMBED_DIMENSIONS || "<未设置，使用模型原生维度>"}`);
+  console.log(`  QMD_EMBED_PROMPT_STYLE: ${runtime.QMD_EMBED_PROMPT_STYLE || "<未设置，按模型名自动识别>"}`);
   console.log(`  QMD_QUERY_EXPANSION_PROVIDER: ${runtime.QMD_QUERY_EXPANSION_PROVIDER || "<未设置>"}`);
   console.log(`  QMD_RERANK_PROVIDER: ${runtime.QMD_RERANK_PROVIDER || "<未设置>"}`);
   console.log(`  QMD_RERANK_MODE: ${runtime.QMD_RERANK_MODE || "<未设置，默认llm>"}`);
