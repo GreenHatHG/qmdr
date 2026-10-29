@@ -4,7 +4,8 @@
   "description": "Remote-first CLI search engine for markdown docs, notes, and knowledge bases",
   "type": "module",
   "bin": {
-    "qmd": "src/qmd.ts"
+    "qmd": "src/qmd.ts",
+    "qmdr": "remote/bin/qmdr"
   },
   "scripts": {
     "test": "bun test",
