@@ -2,10 +2,9 @@
 # QMDR installer: qmd (full CLI) + qmdr (read-only agent front end).
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/GreenHatHG/qmdr/main/scripts/install.sh | sh
-#   sh install.sh [--binary] [--fix-bun]
+#   sh install.sh [--fix-bun]
 #
 # Flags:
-#   --binary   install the prebuilt qmd binary instead of Bun source mode
 #   --fix-bun  downgrade/upgrade Bun to a known-good version (default bun-v1.3.6)
 #
 # Env:
@@ -22,10 +21,8 @@ BUN_MAX_MINOR=3
 BUN_MAX_PATCH=6
 
 FIX_BUN=0
-BINARY=0
 for arg in "$@"; do
   case $arg in
-    --binary) BINARY=1 ;;
     --fix-bun) FIX_BUN=1 ;;
     *) echo "install.sh: unknown flag: $arg" >&2; exit 2 ;;
   esac
@@ -96,11 +93,11 @@ EOF
 }
 
 # The qmdr shim is not a bun bin until the repo's package.json bin map lands on
-# GitHub. Link it by hand so `bun install -g` alone is enough.
-link_qmdr_shim() {
-  pkg="$HOME/.bun/install/global/node_modules/qmdr"
-  [ -x "$pkg/remote/bin/qmdr" ] || return 0
-  ln -sf "../install/global/node_modules/qmdr/remote/bin/qmdr" "$HOME/.bun/bin/qmdr"
+# GitHub. `bun install -g` may still leave a stale ~/.bun/bin/qmdr from older
+# installs; remove it so ~/.local/bin/qmdr is the single entry point.
+dedupe_qmdr_shim() {
+  [ "$PREFIX" = "$HOME/.bun/bin" ] && return 0
+  rm -f "$HOME/.bun/bin/qmdr"
 }
 
 install_from_source() {
@@ -125,7 +122,7 @@ install_from_source() {
 
   write_wrapper qmd
   write_wrapper qmdr
-  link_qmdr_shim
+  dedupe_qmdr_shim
   say "installed: $PREFIX/qmd, $PREFIX/qmdr"
 }
 
@@ -143,22 +140,6 @@ fix_shim_files() {
       || die "failed to fetch remote/bin/$f"
     [ "$f" = "qmd-ro.ts" -o "$f" = "qmdr" ] && chmod +x "$pkg/remote/bin/$f"
   done
-}
-
-install_binary() {
-  os=$(uname -s | tr A-Z a-z)
-  case $os in
-    darwin|linux) ;;
-    *) die "--binary supports macOS/Linux only; use the PowerShell snippet in AI-SETUP.md for Windows" ;;
-  esac
-  arch=$(uname -m)
-  [ "$arch" = "x86_64" ] && arch="x64"
-  say "downloading qmd-$os-$arch ..."
-  url="https://github.com/GreenHatHG/qmdr/releases/latest/download/qmd-$os-$arch"
-  curl -fL "$url" -o "$PREFIX/qmd" || die "download failed: $url"
-  chmod +x "$PREFIX/qmd"
-  say "installed: $PREFIX/qmd"
-  say "note: binary mode ships qmd only; the qmdr read-only front end needs source mode"
 }
 
 verify() {
@@ -179,9 +160,5 @@ verify() {
   say "done. If an AI agent shell still can't find qmd/qmdr, run: hash -r"
 }
 
-if [ "$BINARY" -eq 1 ]; then
-  install_binary
-else
-  install_from_source
-fi
+install_from_source
 verify
