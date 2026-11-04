@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "qmd": "src/qmd.ts",
-    "qmdr": "remote/bin/qmdr"
+    "qmdr": "remote/bin/qmdr",
+    "qmd-ro": "remote/bin/qmd-ro.ts"
   },
   "scripts": {
     "test": "bun test",

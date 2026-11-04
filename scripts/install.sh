@@ -92,12 +92,15 @@ EOF
   chmod +x "$PREFIX/$name"
 }
 
-# The qmdr shim is not a bun bin until the repo's package.json bin map lands on
-# GitHub. `bun install -g` may still leave a stale ~/.bun/bin/qmdr from older
-# installs; remove it so ~/.local/bin/qmdr is the single entry point.
+# The package.json bin map now includes qmdr, so ~/.bun/bin/qmdr is usually a
+# valid bun-managed symlink. Only delete it if it is broken (dangling or
+# non-executable) -- older installs could leave a stale target behind.
 dedupe_qmdr_shim() {
   [ "$PREFIX" = "$HOME/.bun/bin" ] && return 0
-  rm -f "$HOME/.bun/bin/qmdr"
+  link="$HOME/.bun/bin/qmdr"
+  [ -L "$link" ] || return 0
+  [ -x "$link" ] && return 0
+  rm -f "$link"
 }
 
 install_from_source() {
@@ -123,6 +126,7 @@ install_from_source() {
   write_wrapper qmd
   write_wrapper qmdr
   dedupe_qmdr_shim
+  fix_qmdro_bin
   say "installed: $PREFIX/qmd, $PREFIX/qmdr"
 }
 
@@ -142,14 +146,37 @@ fix_shim_files() {
   done
 }
 
+# The bin map covers qmd-ro too, but older installs may lack the symlink and
+# `fix_shim_files` only restores files inside the package dir. Ensure the
+# ~/.bun/bin/qmd-ro symlink exists and points at the real shim.
+fix_qmdro_bin() {
+  [ "$PREFIX" = "$HOME/.bun/bin" ] && return 0
+  src="$HOME/.bun/install/global/node_modules/qmdr/remote/bin/qmd-ro.ts"
+  [ -f "$src" ] || return 0
+  if [ ! -x "$HOME/.bun/bin/qmd-ro" ]; then
+    ln -sfn "../install/global/node_modules/qmdr/remote/bin/qmd-ro.ts" \
+      "$HOME/.bun/bin/qmd-ro"
+  fi
+}
+
 verify() {
   if ! have qmd; then
     export PATH="$PREFIX:$HOME/.bun/bin:$PATH"
   fi
+  # rc files for interactive shells...
   add_rc_line "$HOME/.bashrc"
   add_rc_line "$HOME/.profile"
   # macOS default shell
   [ "$(uname -s)" = "Darwin" ] && add_rc_line "$HOME/.zshrc"
+  # ...and non-interactive shells: `ssh host qmd-ro` runs zsh -c (reads only
+  # ~/.zshenv) or bash -c (reads $BASH_ENV, usually nothing). Without the
+  # ~/.bun/bin PATH line in ~/.zshenv, ssh-mode qmdr cannot find qmd-ro.
+  add_rc_line "$HOME/.zshenv"
+  echo 'export PATH="$HOME/.bun/bin:$PATH"' > "$HOME/.qmdr-path"
+  bashrc=$HOME/.bashrc
+  grep -qs "\.qmdr-path" "$bashrc" || \
+    printf '\n# qmdr over ssh: non-interactive bash reads BASH_ENV only\nexport BASH_ENV="$HOME/.qmdr-path"\n' >> "$bashrc"
+  say "added non-interactive shell PATH setup (~/.zshenv, BASH_ENV)"
 
   say "running qmd doctor ..."
   if qmd doctor 2>/dev/null; then
