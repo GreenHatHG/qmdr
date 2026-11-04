@@ -2221,6 +2221,13 @@ function outputResults(results: { file: string; displayPath: string; title: stri
       // Double empty line between results
       if (i < filtered.length - 1) console.log('\n');
     }
+    // Next-step hint: show how to read a full hit, using the top result as the example
+    const top = filtered[0];
+    if (top) {
+      console.log(`Next: read the full document with`);
+      console.log(`  qmdr multi-get "${toQmdPath(top.displayPath)}" -l 300`);
+      console.log(`(swap in any qmd:// path above; several can be comma-separated)`);
+    }
   } else if (opts.format === "md") {
     for (let i = 0; i < filtered.length; i++) {
       const row = filtered[i];
