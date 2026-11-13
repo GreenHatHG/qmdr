@@ -524,7 +524,7 @@ function showStatus(): void {
   closeDb();
 }
 
-async function updateCollections(allowRun: boolean): Promise<void> {
+async function updateCollections(allowRun: boolean, doPull = false): Promise<void> {
   const db = getDb();
   // Collections are defined in YAML; no duplicate cleanup needed.
 
@@ -582,6 +582,43 @@ async function updateCollections(allowRun: boolean): Promise<void> {
       } catch (err) {
         console.log(`${c.yellow}✗ Update command failed: ${err}${c.reset}`);
         process.exit(1);
+      }
+    }
+
+    // Git pull before re-index if --pull was given (walk up to find repo root)
+    if (doPull) {
+      let gitDir: string | null = null;
+      let dir = col.pwd;
+      while (true) {
+        if (existsSync(join(dir, ".git"))) {
+          gitDir = dir;
+          break;
+        }
+        const parent = join(dir, "..");
+        if (parent === dir) break;
+        dir = parent;
+      }
+      if (gitDir) {
+        console.log(`${c.dim}    git pull${c.reset}`);
+        try {
+          const proc = Bun.spawn(["/usr/bin/env", "git", "pull", "--ff-only"], {
+            cwd: gitDir,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const output = await new Response(proc.stdout).text();
+          const errorOutput = await new Response(proc.stderr).text();
+          const exitCode = await proc.exited;
+          const text = [output.trim(), errorOutput.trim()].filter(Boolean).join("\n");
+          if (text) {
+            console.log(text.split('\n').map(l => `    ${l}`).join('\n'));
+          }
+          if (exitCode !== 0) {
+            console.log(`${c.yellow}✗ git pull failed with exit code ${exitCode}${c.reset}`);
+          }
+        } catch (err) {
+          console.log(`${c.yellow}✗ git pull failed: ${err}${c.reset}`);
+        }
       }
     }
 

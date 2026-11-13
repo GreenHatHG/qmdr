@@ -27,11 +27,12 @@ export function handleStatusCommand(
 export async function handleUpdateCommand(
   values: Record<string, unknown>,
   deps: {
-    updateCollections: (allowRun: boolean) => Promise<void>;
+    updateCollections: (allowRun: boolean, doPull?: boolean) => Promise<void>;
   }
 ): Promise<void> {
   const allowRun = values["allow-run"] === undefined ? false : Boolean(values["allow-run"]);
-  await deps.updateCollections(allowRun);
+  const doPull = Boolean(values.pull);
+  await deps.updateCollections(allowRun, doPull);
 }
 
 export async function handleEmbedCommand(
