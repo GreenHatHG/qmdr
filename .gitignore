@@ -4,13 +4,6 @@ node_modules/
 archive/
 texts/
 .cursor/
-*.md
-!README.md
-!AI-SETUP.md
-!CHANGELOG.md
-!skills/**/*.md
-!finetune/*.md
-!docs/*.md
 finetune/outputs/
 finetune/data/train/
 dist/
