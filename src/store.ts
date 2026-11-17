@@ -24,6 +24,7 @@ import {
   RemoteLLM,
   type RemoteLLMConfig,
   parseQueryExpansionSetting,
+  normalizeRerankScore,
 } from "./llm";
 import {
   findContextForPath as collectionsFindContextForPath,
@@ -2413,7 +2414,8 @@ export async function rerank(query: string, documents: { file: string; text: str
     const cacheKey = getCacheKey("rerank", { query, file: doc.file, model });
     const cached = getCachedResult(db, cacheKey);
     if (cached !== null) {
-      cachedResults.set(doc.file, parseFloat(cached));
+      // Pre-normalization cache entries may hold raw logits; normalize on read too
+      cachedResults.set(doc.file, normalizeRerankScore(parseFloat(cached)));
     } else {
       uncachedDocs.push({ file: doc.file, text: doc.text });
     }

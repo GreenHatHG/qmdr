@@ -2720,8 +2720,10 @@ async function _querySearchImpl(query: string, opts: OutputOptions, embedModel: 
       }
     }
 
-    // Blend RRF position score with aggregated reranker score using position-aware weights
-    // Top retrieval results get more protection from reranker disagreement
+    // Staged design (industry standard: Azure L2, Vespa global-phase, Cohere):
+    // RRF fusion only selects candidates; the reranker's calibrated 0-1 score IS the
+    // final score. Blending rank-based RRF scores with reranker scores produces
+    // misleading percentages (rank #1 always shows ~0.75 even when irrelevant).
     const candidateMap = new Map(candidates.map(cand => [cand.file, { displayPath: cand.displayPath, title: cand.title, body: cand.body }]));
     const rrfRankMap = new Map(candidates.map((cand, i) => [cand.file, i + 1])); // 1-indexed rank
 
@@ -2737,18 +2739,8 @@ async function _querySearchImpl(query: string, opts: OutputOptions, embedModel: 
         finalScore = rerankScore;
         finalBody = extract || (chunkInfo ? (chunkInfo.chunks[bestChunkIdx]?.text || chunkInfo.chunks[0]!.text) : candidate?.body || "");
       } else {
-        // Traditional reranker mode: blend RRF + reranker scores
-        const rrfRank = rrfRankMap.get(file) || 30;
-        let rrfWeight: number;
-        if (rrfRank <= 3) {
-          rrfWeight = 0.75;
-        } else if (rrfRank <= 10) {
-          rrfWeight = 0.60;
-        } else {
-          rrfWeight = 0.40;
-        }
-        const rrfScore = 1 / rrfRank;
-        finalScore = rrfWeight * rrfScore + (1 - rrfWeight) * rerankScore;
+        // Cross-encoder mode: reranker score is final; RRF rank only breaks ties
+        finalScore = rerankScore;
         finalBody = chunkInfo ? (chunkInfo.chunks[bestChunkIdx]?.text || chunkInfo.chunks[0]!.text) : candidate?.body || "";
       }
 
@@ -2773,7 +2765,7 @@ async function _querySearchImpl(query: string, opts: OutputOptions, embedModel: 
       }
     }
 
-    finalResults.sort((a, b) => b.score - a.score);
+    finalResults.sort((a, b) => (b.score - a.score) || (rrfRankMap.get(a.file)! - rrfRankMap.get(b.file)!));
 
     // DEBUG: after sort
     if (_verbose) {
