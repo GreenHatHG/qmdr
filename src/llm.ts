@@ -144,6 +144,14 @@ export type RerankDocumentResult = {
   extract?: string;
 };
 
+// Cross-encoder rerankers return raw unbounded logits; providers with a /rerank
+// API may return either calibrated 0-1 scores or raw logits. Sigmoid only when
+// out of [0,1] so calibrated scores pass through unchanged (RAGFlow-style contract).
+export function normalizeRerankScore(score: number): number {
+  if (score >= 0 && score <= 1) return score;
+  return 1 / (1 + Math.exp(-score));
+}
+
 /**
  * Batch rerank result
  */
@@ -854,7 +862,6 @@ export class RemoteLLM implements LLM {
     if (!sf?.apiKey) {
       throw new Error("RemoteLLM siliconflow.apiKey is required when rerankProvider is 'siliconflow'.");
     }
-
     const baseUrl = (sf.baseUrl || "https://api.siliconflow.cn/v1").replace(/\/$/, "");
     const model = options.model || sf.model || "BAAI/bge-reranker-v2-m3";
 
@@ -882,7 +889,7 @@ export class RemoteLLM implements LLM {
         if (!doc) return null;
         return {
           file: doc.file,
-          score: item.relevance_score,
+          score: normalizeRerankScore(item.relevance_score),
           index: item.index,
         };
       })
@@ -931,7 +938,7 @@ export class RemoteLLM implements LLM {
         if (!doc) return null;
         return {
           file: doc.file,
-          score: item.relevance_score,
+          score: normalizeRerankScore(item.relevance_score),
           index: item.index,
         };
       })
