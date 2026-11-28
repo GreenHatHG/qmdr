@@ -347,9 +347,8 @@ export type RemoteLLMConfig = {
 /**
  * Remote fetch with:
  * - Timeout (AbortController)
- * - Exponential backoff retry with jitter (maxAttempts default: 3)
+ * - Exponential backoff retry with jitter (HTTP statuses: 3 attempts, fetch errors: 5)
  * - Better errors (provider/op + HTTP status + response snippet)
- * - Keep-alive hint header
  */
 async function fetchWithRetry(
   input: string | URL | Request,
@@ -359,12 +358,15 @@ async function fetchWithRetry(
     operation: "embed" | "rerank" | "generate";
     timeoutMs?: number;
     maxAttempts?: number;
+    maxFetchAttempts?: number;
     baseDelayMs?: number;
   },
 ): Promise<Response> {
   const provider = opts.provider;
   const operation = opts.operation;
-  const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
+  const maxStatusAttempts = Math.max(1, opts.maxAttempts ?? 3);
+  const maxFetchAttempts = Math.max(1, opts.maxFetchAttempts ?? 5);
+  const maxAttempts = Math.max(maxStatusAttempts, maxFetchAttempts);
   const baseDelayMs = Math.max(50, opts.baseDelayMs ?? 500);
 
   const DEFAULT_TIMEOUTS_MS = {
@@ -433,23 +435,12 @@ async function fetchWithRetry(
     }
   };
 
-  const initWithKeepAlive: RequestInit | undefined = init
-    ? {
-      ...init,
-      headers: (() => {
-        const headers = new Headers(init.headers);
-        if (!headers.has("connection")) headers.set("Connection", "keep-alive");
-        return headers;
-      })(),
-    }
-    : init;
-
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs);
 
-    if (initWithKeepAlive?.signal) {
-      const parent = initWithKeepAlive.signal;
+    if (init?.signal) {
+      const parent = init.signal;
       if (parent.aborted) {
         controller.abort(parent.reason);
       } else {
@@ -461,7 +452,7 @@ async function fetchWithRetry(
     let fetchErr: unknown = null;
 
     try {
-      resp = await fetch(input, { ...(initWithKeepAlive || {}), signal: controller.signal });
+      resp = await fetch(input, { ...(init || {}), signal: controller.signal });
     } catch (err) {
       fetchErr = err;
     } finally {
@@ -476,13 +467,13 @@ async function fetchWithRetry(
       const msg = `[${provider}] ${operation} failed (HTTP ${status}) ${url}${snippet ? ` — ${snippet}` : ""}`;
 
       const retryable = isRetryableStatus(status);
-      if (!retryable || attempt === maxAttempts) {
+      if (!retryable || attempt === maxStatusAttempts) {
         throw new Error(msg);
       }
 
       const retryAfterMs = getRetryAfterMs(resp);
       const delayMs = Math.max(retryAfterMs ?? 0, backoffDelayMs(attempt));
-      process.stderr.write(`${msg}\nRetrying in ${Math.round(delayMs / 1000)}s (attempt ${attempt + 1}/${maxAttempts})...\n`);
+      process.stderr.write(`${msg}\nRetrying in ${Math.round(delayMs / 1000)}s (attempt ${attempt + 1}/${maxStatusAttempts})...\n`);
       await sleep(delayMs);
       continue;
     }
@@ -490,12 +481,12 @@ async function fetchWithRetry(
     const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
     const msg = `[${provider}] ${operation} error ${url} — ${errMsg}`;
 
-    if (attempt === maxAttempts) {
+    if (attempt === maxFetchAttempts) {
       throw new Error(msg);
     }
 
     const delayMs = backoffDelayMs(attempt);
-    process.stderr.write(`${msg}\nRetrying in ${Math.round(delayMs / 1000)}s (attempt ${attempt + 1}/${maxAttempts})...\n`);
+    process.stderr.write(`${msg}\nRetrying in ${Math.round(delayMs / 1000)}s (attempt ${attempt + 1}/${maxFetchAttempts})...\n`);
     await sleep(delayMs);
   }
 
